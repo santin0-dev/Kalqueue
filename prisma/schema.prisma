@@ -1,0 +1,318 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+
+enum UserRole {
+  PATIENT
+  DOCTOR
+  ADMIN
+}
+
+enum PatientCategory {
+  REGULAR
+  PWD
+  SENIOR
+  PREGNANT
+  HMO
+  GOVERNMENT_ASSISTED
+}
+
+enum TicketType {
+  APPOINTMENT
+  WALKIN
+}
+
+enum TicketStatus {
+  WAITING
+  IN_CONSULT
+  DONE
+  NO_SHOW
+  RESCHEDULED
+  CANCELLED
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  MISSED
+  RESCHEDULED
+  CANCELLED
+}
+
+enum NotificationChannel {
+  SMS
+  PUSH
+  IN_APP
+}
+
+enum LOAStatus {
+  NOT_REQUIRED
+  PENDING
+  SECURED
+  FAILED
+}
+
+enum ClinicType {
+  PUBLIC
+  PRIVATE
+  COMMUNITY
+}
+
+enum AvailabilityStatus {
+  SCHEDULED
+  ACTIVE
+  DELAYED
+  ABSENT
+  DONE
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         UserRole
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  patient Patient?
+  doctor  Doctor?
+  admin   Admin?
+}
+
+model Patient {
+  id                 String          @id @default(cuid())
+  userId             String          @unique
+  firstName          String
+  lastName           String
+  dateOfBirth        DateTime
+  phone              String
+  address            String
+  category           PatientCategory @default(REGULAR)
+  languagePreference String          @default("en")
+  hmoProvider        String?
+  hmoMemberNumber    String?
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointments  Appointment[]
+  queueTickets  QueueTicket[]
+  intakeForms   IntakeForm[]
+  notifications Notification[]
+  consultations ConsultationRecord[]
+}
+
+model Doctor {
+  id            String @id @default(cuid())
+  userId        String @unique
+  firstName     String
+  lastName      String
+  specialty     String
+  licenseNumber String
+  phone         String
+
+  user                User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clinicAssignments   DoctorClinicAssignment[]
+  availabilityWindows AvailabilityWindow[]
+  consultationRecords ConsultationRecord[]
+  queueTickets        QueueTicket[]
+  appointments        Appointment[]
+}
+
+model Admin {
+  id        String @id @default(cuid())
+  userId    String @unique
+  firstName String
+  lastName  String
+  clinicId  String?
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clinic        Clinic?        @relation(fields: [clinicId], references: [id])
+  announcements Announcement[]
+}
+
+model Clinic {
+  id      String     @id @default(cuid())
+  name    String
+  address String
+  phone   String
+  type    ClinicType @default(PUBLIC)
+
+  departments       Department[]
+  doctorAssignments DoctorClinicAssignment[]
+  capacityConfig    ClinicCapacityConfig?
+  availabilityWindows AvailabilityWindow[]
+  queueTickets      QueueTicket[]
+  appointments      Appointment[]
+  admins            Admin[]
+}
+
+model Department {
+  id                     String @id @default(cuid())
+  clinicId               String
+  name                   String
+  floor                  String
+  building               String
+  roomNumber             String
+  navigationInstructions String @default("")
+
+  clinic            Clinic                   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  doctorAssignments DoctorClinicAssignment[]
+  queueTickets      QueueTicket[]
+  availabilityWindows AvailabilityWindow[]
+  appointments      Appointment[]
+}
+
+model DoctorClinicAssignment {
+  id           String  @id @default(cuid())
+  doctorId     String
+  clinicId     String
+  departmentId String
+  isActive     Boolean @default(true)
+
+  doctor     Doctor     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinic     Clinic     @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, clinicId, departmentId])
+}
+
+model AvailabilityWindow {
+  id           String             @id @default(cuid())
+  doctorId     String
+  clinicId     String
+  departmentId String
+  date         DateTime           @db.Date
+  startTime    String
+  endTime      String
+  status       AvailabilityStatus @default(SCHEDULED)
+  delayMinutes Int                @default(0)
+
+  doctor     Doctor     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinic     Clinic     @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+}
+
+model ClinicCapacityConfig {
+  id               String @id @default(cuid())
+  clinicId         String @unique
+  appointmentRatio Float  @default(0.6)
+  walkinRatio      Float  @default(0.4)
+  blockSize        Int    @default(10)
+  maxDailyWalkins  Int    @default(50)
+
+  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+}
+
+model Appointment {
+  id           String            @id @default(cuid())
+  patientId    String
+  doctorId     String
+  clinicId     String
+  departmentId String
+  scheduledAt  DateTime
+  status       AppointmentStatus @default(PENDING)
+  notes        String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  patient    Patient    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor     Doctor     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinic     Clinic     @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+}
+
+model QueueTicket {
+  id                   String       @id @default(cuid())
+  patientId            String
+  doctorId             String
+  clinicId             String
+  departmentId         String
+  type                 TicketType
+  status               TicketStatus @default(WAITING)
+  priorityWeight       Float
+  estimatedWaitMinutes Int          @default(0)
+  calledAt             DateTime?
+  completedAt          DateTime?
+  loaStatus            LOAStatus    @default(NOT_REQUIRED)
+  loaSecuredAt         DateTime?
+  intakeFormId         String?
+  createdAt            DateTime     @default(now())
+
+  patient            Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor             Doctor              @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinic             Clinic              @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  department         Department          @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  intakeForm         IntakeForm?         @relation(fields: [intakeFormId], references: [id])
+  consultationRecord ConsultationRecord?
+}
+
+model IntakeForm {
+  id                String   @id @default(cuid())
+  patientId         String
+  chiefComplaint    String
+  notes             String?
+  documentChecklist Json
+  languageFlag      String?
+  submittedAt       DateTime @default(now())
+
+  patient      Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  queueTickets QueueTicket[]
+}
+
+model ConsultationRecord {
+  id            String    @id @default(cuid())
+  queueTicketId String    @unique
+  doctorId      String
+  patientId     String
+  findings      String?
+  prescription  String?
+  followUpDate  DateTime?
+  priorSummary  String    @default("")
+  createdAt     DateTime  @default(now())
+
+  queueTicket QueueTicket @relation(fields: [queueTicketId], references: [id], onDelete: Cascade)
+  doctor      Doctor      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient     Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id          String              @id @default(cuid())
+  patientId   String
+  channel     NotificationChannel
+  title       String
+  body        String
+  sentAt      DateTime            @default(now())
+  read        Boolean             @default(false)
+  triggeredBy String
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}
+
+model Announcement {
+  id          String   @id @default(cuid())
+  adminId     String
+  title       String
+  body        String
+  publishedAt DateTime @default(now())
+  isActive    Boolean  @default(true)
+
+  admin Admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+}
+
+model OverflowWaitlist {
+  id           String     @id @default(cuid())
+  patientId    String
+  doctorId     String
+  clinicId     String
+  departmentId String
+  type         TicketType
+  intakeFormId String?
+  createdAt    DateTime   @default(now())
+}
