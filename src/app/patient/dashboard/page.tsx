@@ -7,6 +7,11 @@ import { Card } from "@/components/ui/card";
 import { CategoryBadge, StatusBadge } from "@/components/ui/badge";
 import { QueueTicker } from "@/components/queue-ticker";
 import { LoadingState } from "@/components/ui/loading-state";
+import { Modal } from "@/components/ui/modal";
+import {
+  ConsultationRecordCard,
+  type PatientConsultationRecord,
+} from "@/components/consultation-record-card";
 
 interface PatientData {
   firstName: string;
@@ -50,17 +55,34 @@ interface PatientData {
 export default function PatientDashboard() {
   const { data: session } = useSession();
   const [patient, setPatient] = useState<PatientData | null>(null);
+  const [latestRecord, setLatestRecord] = useState<PatientConsultationRecord | null>(null);
+  const [showPostCheckup, setShowPostCheckup] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/patients")
-      .then((r) => r.json())
-      .then((data) => {
+    Promise.all([
+      fetch("/api/patients").then((r) => r.json()),
+      fetch("/api/patients/records").then((r) => r.json()),
+    ])
+      .then(([data, recordData]) => {
         setPatient(data);
+        const newest = recordData.records?.[0] ?? null;
+        setLatestRecord(newest);
+
+        if (newest && window.localStorage.getItem("seen-record-" + newest.id) !== "true") {
+          setShowPostCheckup(true);
+        }
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, []);
+
+  function closePostCheckup() {
+    if (latestRecord) {
+      window.localStorage.setItem("seen-record-" + latestRecord.id, "true");
+    }
+    setShowPostCheckup(false);
+  }
 
   if (loading) {
     return (
@@ -78,6 +100,24 @@ export default function PatientDashboard() {
 
   return (
     <div>
+      <Modal
+        isOpen={showPostCheckup && !!latestRecord}
+        onClose={closePostCheckup}
+        title="Post-Checkup Notes"
+      >
+        {latestRecord && (
+          <div className="space-y-4">
+            <ConsultationRecordCard record={latestRecord} compact />
+            <button
+              onClick={closePostCheckup}
+              className="w-full rounded-lg bg-teal-700 px-4 py-2.5 font-medium text-white hover:bg-teal-800"
+            >
+              Got it
+            </button>
+          </div>
+        )}
+      </Modal>
+
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">
           Welcome, {session?.user.firstName ?? patient?.firstName}

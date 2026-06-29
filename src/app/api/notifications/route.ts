@@ -4,6 +4,9 @@ import {
   getPatientNotifications,
   markNotificationRead,
 } from "@/lib/notifications";
+import { prisma } from "@/lib/prisma";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
@@ -12,10 +15,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const patientId = req.nextUrl.searchParams.get("patientId") ?? session.user.patientId;
+    const patientId =
+      session.user.role === "PATIENT"
+        ? session.user.patientId
+        : req.nextUrl.searchParams.get("patientId") ?? session.user.patientId;
 
     if (!patientId) {
       return NextResponse.json({ error: "Patient ID required" }, { status: 400 });
+    }
+
+    if (session.user.role === "PATIENT" && patientId !== session.user.patientId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const notifications = await getPatientNotifications(patientId);
@@ -38,6 +48,17 @@ export async function PATCH(req: NextRequest) {
 
     if (!notificationId) {
       return NextResponse.json({ error: "Notification ID required" }, { status: 400 });
+    }
+
+    if (session.user.role === "PATIENT") {
+      const notification = await prisma.notification.findUnique({
+        where: { id: notificationId },
+        select: { patientId: true },
+      });
+
+      if (!notification || notification.patientId !== session.user.patientId) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     const notification = await markNotificationRead(notificationId);

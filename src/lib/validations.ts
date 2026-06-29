@@ -159,6 +159,10 @@ export const doctorAssignmentSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+export const updateDoctorProfileSchema = z.object({
+  signatureImage: z.string().max(2_000_000).nullable().optional(),
+});
+
 export const loaSecureSchema = z.object({
   ticketId: z.string().min(1),
 });

@@ -11,6 +11,8 @@ const patientLinks = [
   { href: "/patient/dashboard", label: "Dashboard" },
   { href: "/patient/book", label: "Book Visit" },
   { href: "/patient/queue", label: "My Queue" },
+  { href: "/patient/notifications", label: "Notifications" },
+  { href: "/patient/history", label: "History" },
   { href: "/patient/profile", label: "Profile" },
 ];
 
@@ -18,6 +20,7 @@ const doctorLinks = [
   { href: "/doctor/dashboard", label: "Dashboard" },
   { href: "/doctor/queue", label: "Queue" },
   { href: "/doctor/availability", label: "Availability" },
+  { href: "/doctor/profile", label: "Profile" },
 ];
 
 const adminLinks = [
@@ -39,9 +42,11 @@ export function DashboardShell({
   const router = useRouter();
   const { data: session } = useSession();
   const [navLoading, setNavLoading] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     setNavLoading(false);
+    setMenuOpen(false);
   }, [pathname]);
 
   const links =
@@ -64,7 +69,7 @@ export function DashboardShell({
         />
       )}
       <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-gray-100 z-40">
-        <div className="w-full px-6 lg:px-16 xl:px-24 h-full flex items-center justify-between">
+        <div className="w-full px-4 sm:px-6 lg:px-16 xl:px-24 h-full flex items-center justify-between">
           <div className="flex items-center gap-8">
             <Link href="/" className="flex items-center gap-2">
                 <Image src="/Global_logo.png" alt="KalQueue Logo" width={32} height={32} />
@@ -104,11 +109,46 @@ export function DashboardShell({
             >
               Sign Out
             </button>
+            <button
+              className="rounded-lg p-2 text-gray-700 hover:bg-gray-50 md:hidden"
+              onClick={() => setMenuOpen((open) => !open)}
+              aria-label="Toggle dashboard menu"
+            >
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                {menuOpen ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                )}
+              </svg>
+            </button>
           </div>
         </div>
+        {menuOpen && (
+          <div className="absolute left-0 right-0 top-16 border-b border-gray-100 bg-white shadow-lg md:hidden">
+            <div className="grid grid-cols-2 gap-2 px-4 py-4">
+              {links.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => {
+                    if (pathname !== link.href) setNavLoading(true);
+                  }}
+                  className={`rounded-lg px-3 py-3 text-sm font-medium ${
+                    pathname === link.href
+                      ? "bg-teal-50 text-teal-700"
+                      : "text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {link.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
       </header>
       <main className="pt-16">
-        <div className="w-full px-6 lg:px-16 xl:px-24 py-8">{children}</div>
+        <div className="w-full px-4 sm:px-6 lg:px-16 xl:px-24 py-6 sm:py-8">{children}</div>
       </main>
     </div>
   );
