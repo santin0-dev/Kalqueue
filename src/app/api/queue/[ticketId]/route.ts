@@ -26,16 +26,53 @@ export async function PATCH(
     }
 
     const { status, findings, prescription, followUpDate } = parsed.data;
-    const ticket = await updateTicketStatus(params.ticketId, status);
 
     if (status === "IN_CONSULT") {
+      const ticket = await prisma.queueTicket.update({
+        where: { id: params.ticketId },
+        data: {
+          status: "IN_CONSULT",
+          calledAt: new Date(),
+        },
+        include: {
+          patient: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              category: true,
+              phone: true,
+              languagePreference: true,
+            },
+          },
+          intakeForm: {
+            select: { chiefComplaint: true, languageFlag: true },
+          },
+          department: {
+            select: {
+              name: true,
+              floor: true,
+              building: true,
+              navigationInstructions: true,
+            },
+          },
+          doctor: {
+            select: { firstName: true, lastName: true },
+          },
+        },
+      });
+
       await broadcastQueueCalled(
         ticket.clinicId,
         ticket.doctorId,
         ticket.patientId,
         ticket.id
       );
+
+      return NextResponse.json({ ...ticket, position: 1 });
     }
+
+    const ticket = await updateTicketStatus(params.ticketId, status);
 
     if (status === "DONE" && (findings || prescription || followUpDate)) {
       await prisma.consultationRecord.update({

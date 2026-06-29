@@ -11,11 +11,20 @@ function getTwilioClient() {
   ) {
     return null;
   }
+  if (!process.env.TWILIO_ACCOUNT_SID.startsWith("AC")) {
+    console.warn("Twilio SMS disabled: TWILIO_ACCOUNT_SID must start with AC.");
+    return null;
+  }
   if (!twilioClient) {
-    twilioClient = twilio(
-      process.env.TWILIO_ACCOUNT_SID,
-      process.env.TWILIO_AUTH_TOKEN
-    );
+    try {
+      twilioClient = twilio(
+        process.env.TWILIO_ACCOUNT_SID,
+        process.env.TWILIO_AUTH_TOKEN
+      );
+    } catch (err) {
+      console.error("Twilio client setup error:", err);
+      return null;
+    }
   }
   return twilioClient;
 }
@@ -62,13 +71,22 @@ async function notify(params: {
   body: string;
   triggeredBy: string;
 }): Promise<void> {
-  await sendSms(params.phone, params.body);
-  await createInAppNotification({
-    patientId: params.patientId,
-    title: params.title,
-    body: params.body,
-    triggeredBy: params.triggeredBy,
-  });
+  try {
+    await sendSms(params.phone, params.body);
+  } catch (err) {
+    console.error("SMS notification error:", err);
+  }
+
+  try {
+    await createInAppNotification({
+      patientId: params.patientId,
+      title: params.title,
+      body: params.body,
+      triggeredBy: params.triggeredBy,
+    });
+  } catch (err) {
+    console.error("In-app notification error:", err);
+  }
 }
 
 export async function notifyBookingConfirmed(params: {

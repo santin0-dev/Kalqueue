@@ -16,6 +16,7 @@ interface TicketData {
   departmentId: string;
   loaStatus: string;
   doctor: { firstName: string; lastName: string };
+  position?: number;
   department: {
     name: string;
     floor: string;
@@ -33,18 +34,11 @@ export default function PatientQueuePage() {
   useEffect(() => {
     fetch("/api/patients")
       .then((r) => r.json())
-      .then(async (patient) => {
+      .then((patient) => {
         const active = patient.queueTickets?.[0];
         if (active) {
           setTicket(active);
-          const qRes = await fetch(
-            `/api/queue?doctorId=${active.doctorId}&departmentId=${active.departmentId}`
-          );
-          const qData = await qRes.json();
-          const found = qData.tickets?.find(
-            (t: { id: string; position: number }) => t.id === active.id
-          );
-          if (found) setPosition(found.position);
+          setPosition(active.position ?? 0);
         }
         setLoading(false);
       })

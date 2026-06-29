@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useSession, signOut } from "next-auth/react";
 import Image from "next/image";
@@ -15,8 +15,15 @@ const navLinks = [
 
 export function Navbar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
   const [menuOpen, setMenuOpen] = useState(false);
+
+  async function handleSignOut() {
+    await signOut({ redirect: false });
+    router.push("/");
+    router.refresh();
+  }
 
   const dashboardHref =
     session?.user.role === "PATIENT"
@@ -63,7 +70,7 @@ export function Navbar() {
                 </Link>
               )}
               <button
-                onClick={() => signOut({ callbackUrl: "/" })}
+                onClick={handleSignOut}
                 className="text-sm font-medium text-gray-500 hover:text-gray-900"
               >
                 Sign Out
@@ -125,7 +132,7 @@ export function Navbar() {
                     Dashboard
                   </Link>
                 )}
-                <button onClick={() => signOut({ callbackUrl: "/" })} className="text-sm font-medium text-gray-500 text-left">
+                <button onClick={handleSignOut} className="text-sm font-medium text-gray-500 text-left">
                   Sign Out
                 </button>
               </>

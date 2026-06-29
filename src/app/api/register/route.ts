@@ -4,25 +4,42 @@ import { prisma } from "@/lib/prisma";
 import { registerSchema } from "@/lib/validations";
 import { UserRole } from "@prisma/client";
 
+const DEFAULT_DOCTOR_INVITE_CODE = "doctor-invite-2024";
+const DEFAULT_ADMIN_INVITE_CODE = "admin-invite-2024";
+
+function getInviteCode(envValue: string | undefined, fallback: string) {
+  const normalized = envValue?.trim().replace(/^"|"$/g, "");
+  return normalized || fallback;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const parsed = registerSchema.safeParse(body);
 
     if (!parsed.success) {
+      const { fieldErrors, formErrors } = parsed.error.flatten();
       return NextResponse.json(
-        { error: parsed.error.flatten().fieldErrors },
+        { error: fieldErrors, formErrors },
         { status: 400 }
       );
     }
 
     const data = parsed.data;
+    const doctorInviteCode = getInviteCode(
+      process.env.DOCTOR_INVITE_CODE,
+      DEFAULT_DOCTOR_INVITE_CODE
+    );
+    const adminInviteCode = getInviteCode(
+      process.env.ADMIN_INVITE_CODE,
+      DEFAULT_ADMIN_INVITE_CODE
+    );
 
-    if (data.role === "DOCTOR" && data.inviteCode !== process.env.DOCTOR_INVITE_CODE) {
+    if (data.role === "DOCTOR" && data.inviteCode !== doctorInviteCode) {
       return NextResponse.json({ error: "Invalid doctor invite code" }, { status: 403 });
     }
 
-    if (data.role === "ADMIN" && data.inviteCode !== process.env.ADMIN_INVITE_CODE) {
+    if (data.role === "ADMIN" && data.inviteCode !== adminInviteCode) {
       return NextResponse.json({ error: "Invalid admin invite code" }, { status: 403 });
     }
 

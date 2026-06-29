@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { updatePatientSchema } from "@/lib/validations";
+import { getQueuePosition } from "@/lib/queue-engine";
 
 export async function GET(req: NextRequest) {
   try {
@@ -54,7 +55,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Patient not found" }, { status: 404 });
     }
 
-    return NextResponse.json(patient);
+    const queueTickets = await Promise.all(
+      patient.queueTickets.map(async (ticket) => ({
+        ...ticket,
+        position: await getQueuePosition(
+          ticket.id,
+          ticket.doctorId,
+          ticket.departmentId,
+          ticket.createdAt
+        ),
+      }))
+    );
+
+    return NextResponse.json({ ...patient, queueTickets });
   } catch (err) {
     console.error("Patients GET error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

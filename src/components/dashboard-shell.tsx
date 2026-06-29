@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import Image from "next/image";
 
@@ -34,6 +34,7 @@ export function DashboardShell({
   role: "PATIENT" | "DOCTOR" | "ADMIN";
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
 
   const links =
@@ -76,7 +77,11 @@ export function DashboardShell({
               {session?.user.firstName} · {roleLabel}
             </span>
             <button
-              onClick={() => signOut({ callbackUrl: "/" })}
+              onClick={async () => {
+                await signOut({ redirect: false });
+                router.push("/");
+                router.refresh();
+              }}
               className="text-sm text-gray-500 hover:text-gray-900"
             >
               Sign Out

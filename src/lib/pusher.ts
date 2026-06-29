@@ -34,6 +34,24 @@ export function createPusherClient(): PusherClient | null {
   return new PusherClient(key, { cluster });
 }
 
+async function triggerRealtime(
+  jobs: Promise<unknown>[],
+  label: string
+): Promise<void> {
+  const timeout = new Promise<void>((resolve) => {
+    setTimeout(resolve, 1500);
+  });
+
+  try {
+    await Promise.race([
+      Promise.all(jobs).then(() => undefined),
+      timeout,
+    ]);
+  } catch (err) {
+    console.error(`${label} realtime error:`, err);
+  }
+}
+
 export async function broadcastQueueUpdate(
   clinicId: string,
   doctorId: string,
@@ -45,10 +63,10 @@ export async function broadcastQueueUpdate(
 
   const payload = { doctorId, departmentId, tickets };
 
-  await Promise.all([
+  await triggerRealtime([
     pusher.trigger(`clinic-${clinicId}`, "queue:updated", payload),
     pusher.trigger(`doctor-${doctorId}`, "queue:updated", payload),
-  ]);
+  ], "queue update");
 }
 
 export async function broadcastQueueCalled(
@@ -62,11 +80,11 @@ export async function broadcastQueueCalled(
 
   const payload = { ticketId, patientId, position: 1 };
 
-  await Promise.all([
+  await triggerRealtime([
     pusher.trigger(`clinic-${clinicId}`, "queue:called", payload),
     pusher.trigger(`doctor-${doctorId}`, "queue:called", payload),
     pusher.trigger(`patient-${patientId}`, "queue:called", payload),
-  ]);
+  ], "queue called");
 }
 
 export async function broadcastDoctorDelayed(
@@ -80,10 +98,10 @@ export async function broadcastDoctorDelayed(
 
   const payload = { doctorId, delayMinutes, newEstimates };
 
-  await Promise.all([
+  await triggerRealtime([
     pusher.trigger(`clinic-${clinicId}`, "doctor:delayed", payload),
     pusher.trigger(`doctor-${doctorId}`, "doctor:delayed", payload),
-  ]);
+  ], "doctor delayed");
 }
 
 export async function broadcastDoctorAbsent(
@@ -96,10 +114,10 @@ export async function broadcastDoctorAbsent(
 
   const payload = { doctorId, affectedTickets };
 
-  await Promise.all([
+  await triggerRealtime([
     pusher.trigger(`clinic-${clinicId}`, "doctor:absent", payload),
     pusher.trigger(`doctor-${doctorId}`, "doctor:absent", payload),
-  ]);
+  ], "doctor absent");
 }
 
 export async function broadcastLoaSecured(
@@ -112,8 +130,8 @@ export async function broadcastLoaSecured(
 
   const payload = { ticketId, patientId };
 
-  await Promise.all([
+  await triggerRealtime([
     pusher.trigger(`clinic-${clinicId}`, "loa:secured", payload),
     pusher.trigger(`patient-${patientId}`, "loa:secured", payload),
-  ]);
+  ], "loa secured");
 }

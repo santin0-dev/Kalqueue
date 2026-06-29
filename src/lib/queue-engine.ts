@@ -4,7 +4,6 @@ import {
   TicketType,
   LOAStatus,
   AvailabilityStatus,
-  Prisma,
 } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
@@ -379,7 +378,21 @@ export async function createQueueTicket(
     appointmentConfirmed: input.type === TicketType.APPOINTMENT,
   });
 
-  const avgDuration = await getAvgConsultDuration(input.doctorId);
+  const activeAheadCount = await prisma.queueTicket.count({
+    where: {
+      clinicId: input.clinicId,
+      doctorId: input.doctorId,
+      departmentId: input.departmentId,
+      createdAt: { gte: startOfDay(date), lte: endOfDay(date) },
+      status: { in: [TicketStatus.WAITING, TicketStatus.IN_CONSULT] },
+      priorityWeight: { gt: priorityWeight },
+      OR: [
+        { loaStatus: { not: LOAStatus.PENDING } },
+        { loaStatus: LOAStatus.SECURED },
+      ],
+    },
+  });
+  const estimatedWaitMinutes = (activeAheadCount + 1) * DEFAULT_CONSULT_DURATION;
 
   const ticket = await prisma.queueTicket.create({
     data: {
@@ -391,7 +404,7 @@ export async function createQueueTicket(
       intakeFormId: input.intakeFormId,
       priorityWeight,
       loaStatus,
-      estimatedWaitMinutes: avgDuration,
+      estimatedWaitMinutes,
     },
     include: {
       patient: {
@@ -421,31 +434,15 @@ export async function createQueueTicket(
     },
   });
 
-  const enriched = await enrichSingleTicket(ticket, date);
+  const enriched = {
+    ...ticket,
+    position: activeAheadCount + 1,
+    estimatedWaitMinutes,
+  };
 
-  await prisma.queueTicket.update({
-    where: { id: ticket.id },
-    data: { estimatedWaitMinutes: enriched.estimatedWaitMinutes },
+  recalculateQueue(input.doctorId, input.departmentId, input.clinicId).catch((err) => {
+    console.error("Queue recalculation after ticket creation failed:", err);
   });
-
-  const allTickets = await getActiveTickets(
-    input.doctorId,
-    input.departmentId,
-    date
-  );
-  const enrichedAll = await enrichTicketsWithPosition(
-    allTickets,
-    input.doctorId,
-    input.departmentId,
-    date
-  );
-
-  await broadcastQueueUpdate(
-    input.clinicId,
-    input.doctorId,
-    input.departmentId,
-    enrichedAll
-  );
 
   return { ticket: enriched, overflow: false };
 }
@@ -456,77 +453,71 @@ export async function updateTicketStatus(
 ): Promise<EnrichedTicket> {
   const date = new Date();
 
-  const result = await prisma.$transaction(async (tx) => {
-    const ticket = await tx.queueTicket.findUnique({
-      where: { id: ticketId },
-      include: {
-        patient: true,
-        doctor: true,
-        department: true,
-        clinic: true,
-      },
-    });
-
-    if (!ticket) throw new Error("Ticket not found");
-
-    const updateData: Prisma.QueueTicketUpdateInput = { status };
-
-    if (status === TicketStatus.IN_CONSULT) {
-      updateData.calledAt = new Date();
-    }
-    if (status === TicketStatus.DONE) {
-      updateData.completedAt = new Date();
-    }
-
-    const updated = await tx.queueTicket.update({
-      where: { id: ticketId },
-      data: updateData,
-      include: {
-        patient: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            category: true,
-            phone: true,
-            languagePreference: true,
-          },
-        },
-        intakeForm: {
-          select: { chiefComplaint: true, languageFlag: true },
-        },
-        department: {
-          select: {
-            name: true,
-            floor: true,
-            building: true,
-            navigationInstructions: true,
-          },
-        },
-        doctor: {
-          select: { firstName: true, lastName: true },
-        },
-      },
-    });
-
-    if (status === TicketStatus.DONE) {
-      const priorRecord = await tx.consultationRecord.findFirst({
-        where: { patientId: ticket.patientId },
-        orderBy: { createdAt: "desc" },
-      });
-
-      await tx.consultationRecord.create({
-        data: {
-          queueTicketId: ticketId,
-          doctorId: ticket.doctorId,
-          patientId: ticket.patientId,
-          priorSummary: priorRecord?.findings ?? "",
-        },
-      });
-    }
-
-    return updated;
+  const existing = await prisma.queueTicket.findUnique({
+    where: { id: ticketId },
+    select: {
+      doctorId: true,
+      patientId: true,
+    },
   });
+
+  if (!existing) throw new Error("Ticket not found");
+
+  const result = await prisma.queueTicket.update({
+    where: { id: ticketId },
+    data: {
+      status,
+      calledAt: status === TicketStatus.IN_CONSULT ? new Date() : undefined,
+      completedAt: status === TicketStatus.DONE ? new Date() : undefined,
+    },
+    include: {
+      patient: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          category: true,
+          phone: true,
+          languagePreference: true,
+        },
+      },
+      intakeForm: {
+        select: { chiefComplaint: true, languageFlag: true },
+      },
+      department: {
+        select: {
+          name: true,
+          floor: true,
+          building: true,
+          navigationInstructions: true,
+        },
+      },
+      doctor: {
+        select: { firstName: true, lastName: true },
+      },
+    },
+  });
+
+  if (status === TicketStatus.DONE) {
+    const priorRecord = await prisma.consultationRecord.findFirst({
+      where: {
+        patientId: existing.patientId,
+        queueTicketId: { not: ticketId },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    await prisma.consultationRecord.upsert({
+      where: { queueTicketId: ticketId },
+      create: {
+        queueTicketId: ticketId,
+        doctorId: existing.doctorId,
+        patientId: existing.patientId,
+        priorSummary: priorRecord?.findings ?? "",
+      },
+      update: {},
+    });
+  }
 
   const enriched = await enrichSingleTicket(result, date);
 
@@ -561,28 +552,30 @@ export async function updateTicketStatus(
     });
   }
 
-  for (const t of enrichedAll) {
-    if (t.position <= 3) {
-      const clinic = await prisma.clinic.findUnique({
-        where: { id: t.clinicId },
-      });
-      await notifyQueuePositionUpdate({
-        patientId: t.patientId,
-        phone: t.patient.phone,
-        position: t.position,
-        estimatedWait: t.estimatedWaitMinutes,
-        clinicName: clinic?.name ?? "Clinic",
-        department: t.department.name,
-        floor: t.department.floor,
-        building: t.department.building,
-      });
-    }
-    if (t.patient.category === PatientCategory.HMO && t.position <= 5) {
-      await notifyLoaReminder({
-        patientId: t.patientId,
-        phone: t.patient.phone,
-        position: t.position,
-      });
+  if (status !== TicketStatus.IN_CONSULT) {
+    for (const t of enrichedAll) {
+      if (t.position <= 3) {
+        const clinic = await prisma.clinic.findUnique({
+          where: { id: t.clinicId },
+        });
+        await notifyQueuePositionUpdate({
+          patientId: t.patientId,
+          phone: t.patient.phone,
+          position: t.position,
+          estimatedWait: t.estimatedWaitMinutes,
+          clinicName: clinic?.name ?? "Clinic",
+          department: t.department.name,
+          floor: t.department.floor,
+          building: t.department.building,
+        });
+      }
+      if (t.patient.category === PatientCategory.HMO && t.position <= 5) {
+        await notifyLoaReminder({
+          patientId: t.patientId,
+          phone: t.patient.phone,
+          position: t.position,
+        });
+      }
     }
   }
 

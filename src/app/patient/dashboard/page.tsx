@@ -16,6 +16,7 @@ interface PatientData {
     status: string;
     loaStatus: string;
     estimatedWaitMinutes: number;
+    position: number;
     clinicId: string;
     doctor: { firstName: string; lastName: string };
     department: {
@@ -87,7 +88,7 @@ export default function PatientDashboard() {
                 ticketId={activeTicket.id}
                 initialTicket={{
                   id: activeTicket.id,
-                  position: 0,
+                  position: activeTicket.position,
                   estimatedWaitMinutes: activeTicket.estimatedWaitMinutes,
                   status: activeTicket.status,
                   doctor: activeTicket.doctor,

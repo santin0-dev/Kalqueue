@@ -6,6 +6,8 @@ import { Card } from "@/components/ui/card";
 import { CategoryBadge, StatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/input";
 import { QueueTicker } from "@/components/queue-ticker";
+import { createPusherClient } from "@/lib/pusher";
+import type PusherClient from "pusher-js";
 
 interface QueueTicket {
   id: string;
@@ -25,8 +27,20 @@ export default function DoctorQueuePage() {
   const [tickets, setTickets] = useState<QueueTicket[]>([]);
   const [clinicId, setClinicId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
+  const [pendingTicketId, setPendingTicketId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
 
-  const loadQueue = useCallback(async () => {
+  const loadQueue = useCallback(async (nextDepartmentId = departmentId) => {
+    if (!session?.user.doctorId || !nextDepartmentId) return;
+
+    const qRes = await fetch(
+      `/api/queue?doctorId=${session.user.doctorId}&departmentId=${nextDepartmentId}`
+    );
+    const qData = await qRes.json();
+    setTickets(qData.tickets ?? []);
+  }, [departmentId, session?.user.doctorId]);
+
+  const loadSetup = useCallback(async () => {
     if (!session?.user.doctorId) return;
 
     const doctorsRes = await fetch("/api/doctors");
@@ -39,25 +53,81 @@ export default function DoctorQueuePage() {
     const assignment = me.clinicAssignments[0];
     setClinicId(assignment.clinicId);
     setDepartmentId(assignment.departmentId);
-
-    const qRes = await fetch(
-      `/api/queue?doctorId=${session.user.doctorId}&departmentId=${assignment.departmentId}`
-    );
-    const qData = await qRes.json();
-    setTickets(qData.tickets ?? []);
-  }, [session?.user.doctorId]);
+    loadQueue(assignment.departmentId);
+  }, [loadQueue, session?.user.doctorId]);
 
   useEffect(() => {
-    loadQueue();
-  }, [loadQueue]);
+    loadSetup();
+  }, [loadSetup]);
+
+  useEffect(() => {
+    if (!departmentId) return;
+
+    const interval = window.setInterval(() => loadQueue(), 5000);
+    return () => window.clearInterval(interval);
+  }, [departmentId, loadQueue]);
+
+  useEffect(() => {
+    if (!clinicId || !session?.user.doctorId) return;
+
+    const pusher = createPusherClient();
+    if (!pusher) return;
+
+    const channels = [
+      pusher.subscribe(`clinic-${clinicId}`),
+      pusher.subscribe(`doctor-${session.user.doctorId}`),
+    ];
+
+    channels.forEach((channel) => {
+      channel.bind(
+        "queue:updated",
+        (data: { departmentId: string; tickets: QueueTicket[] }) => {
+          if (data.departmentId === departmentId) {
+            setTickets(data.tickets ?? []);
+          }
+        }
+      );
+    });
+
+    return () => {
+      channels.forEach((channel: ReturnType<PusherClient["subscribe"]>) => {
+        channel.unbind_all();
+        pusher.unsubscribe(channel.name);
+      });
+      pusher.disconnect();
+    };
+  }, [clinicId, departmentId, session?.user.doctorId]);
 
   async function updateStatus(ticketId: string, status: string) {
-    await fetch(`/api/queue/${ticketId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    loadQueue();
+    setPendingTicketId(ticketId);
+    setActionError("");
+
+    try {
+      const res = await fetch(`/api/queue/${ticketId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Unable to update queue ticket");
+      }
+
+      if (status === "IN_CONSULT") {
+        setTickets((current) =>
+          current.map((ticket) =>
+            ticket.id === ticketId ? { ...ticket, status: "IN_CONSULT" } : ticket
+          )
+        );
+      }
+
+      await loadQueue();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Unable to update queue ticket");
+    } finally {
+      setPendingTicketId(null);
+    }
   }
 
   return (
@@ -71,6 +141,11 @@ export default function DoctorQueuePage() {
       )}
 
       <Card>
+        {actionError && (
+          <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+            {actionError}
+          </p>
+        )}
         <div className="space-y-3">
           {tickets.map((ticket) => (
             <div
@@ -95,10 +170,20 @@ export default function DoctorQueuePage() {
               <div className="flex items-center gap-2">
                 <StatusBadge status={ticket.status} />
                 {ticket.status === "WAITING" && (
-                  <Button onClick={() => updateStatus(ticket.id, "IN_CONSULT")}>Call</Button>
+                  <Button
+                    disabled={pendingTicketId === ticket.id}
+                    onClick={() => updateStatus(ticket.id, "IN_CONSULT")}
+                  >
+                    {pendingTicketId === ticket.id ? "Calling..." : "Call"}
+                  </Button>
                 )}
                 {ticket.status === "IN_CONSULT" && (
-                  <Button onClick={() => updateStatus(ticket.id, "DONE")}>Done</Button>
+                  <Button
+                    disabled={pendingTicketId === ticket.id}
+                    onClick={() => updateStatus(ticket.id, "DONE")}
+                  >
+                    Done
+                  </Button>
                 )}
               </div>
             </div>

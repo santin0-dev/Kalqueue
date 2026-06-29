@@ -7,6 +7,8 @@ import { CategoryBadge, StatusBadge } from "@/components/ui/badge";
 import { Button, Textarea, Input } from "@/components/ui/input";
 import { QueueTicker } from "@/components/queue-ticker";
 import { Modal } from "@/components/ui/modal";
+import { createPusherClient } from "@/lib/pusher";
+import type PusherClient from "pusher-js";
 
 interface QueueTicket {
   id: string;
@@ -33,6 +35,12 @@ interface AvailabilityWindow {
   delayMinutes: number;
 }
 
+interface QueueStats {
+  seen: number;
+  avgTime: number;
+  pending: number;
+}
+
 export default function DoctorDashboard() {
   const { data: session } = useSession();
   const [tickets, setTickets] = useState<QueueTicket[]>([]);
@@ -42,8 +50,38 @@ export default function DoctorDashboard() {
   const [stats, setStats] = useState({ seen: 0, avgTime: 8, pending: 0 });
   const [clinicId, setClinicId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
+  const [pendingTicketId, setPendingTicketId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
 
-  const loadQueue = useCallback(async () => {
+  const applyQueueTickets = useCallback((nextTickets: QueueTicket[], nextStats?: QueueStats) => {
+    setTickets(nextTickets);
+    setStats((current) => nextStats ?? {
+      ...current,
+      pending: nextTickets.filter((t) => t.status === "WAITING").length,
+    });
+  }, []);
+
+  const loadQueue = useCallback(async (nextDepartmentId = departmentId) => {
+    if (!session?.user.doctorId || !nextDepartmentId) return;
+
+    const qRes = await fetch(
+      `/api/queue?doctorId=${session.user.doctorId}&departmentId=${nextDepartmentId}`
+    );
+    const qData = await qRes.json();
+    applyQueueTickets(qData.tickets ?? [], qData.stats);
+  }, [applyQueueTickets, departmentId, session?.user.doctorId]);
+
+  const loadAvailability = useCallback(async () => {
+    if (!session?.user.doctorId) return;
+
+    const avRes = await fetch(
+      `/api/doctors/availability?doctorId=${session.user.doctorId}`
+    );
+    const avData = await avRes.json();
+    setAvailability(avData.windows?.[0] ?? null);
+  }, [session?.user.doctorId]);
+
+  const loadSetup = useCallback(async () => {
     if (!session?.user.doctorId) return;
 
     const doctorsRes = await fetch("/api/doctors");
@@ -57,40 +95,86 @@ export default function DoctorDashboard() {
     const assignment = me.clinicAssignments[0];
     setClinicId(assignment.clinicId);
     setDepartmentId(assignment.departmentId);
-
-    const qRes = await fetch(
-      `/api/queue?doctorId=${session.user.doctorId}&departmentId=${assignment.departmentId}`
-    );
-    const qData = await qRes.json();
-    setTickets(qData.tickets ?? []);
-    setStats({
-      seen: qData.tickets?.filter((t: QueueTicket) => t.status === "DONE").length ?? 0,
-      avgTime: 8,
-      pending: qData.tickets?.filter((t: QueueTicket) => t.status === "WAITING").length ?? 0,
-    });
-
-    const avRes = await fetch(
-      `/api/doctors/availability?doctorId=${session.user.doctorId}`
-    );
-    const avData = await avRes.json();
-    setAvailability(avData.windows?.[0] ?? null);
-  }, [session?.user.doctorId]);
+    loadQueue(assignment.departmentId);
+    loadAvailability();
+  }, [loadAvailability, loadQueue, session?.user.doctorId]);
 
   useEffect(() => {
-    loadQueue();
-  }, [loadQueue]);
+    loadSetup();
+  }, [loadSetup]);
+
+  useEffect(() => {
+    if (!departmentId) return;
+
+    const interval = window.setInterval(() => loadQueue(), 5000);
+    return () => window.clearInterval(interval);
+  }, [departmentId, loadQueue]);
+
+  useEffect(() => {
+    if (!clinicId || !session?.user.doctorId) return;
+
+    const pusher = createPusherClient();
+    if (!pusher) return;
+
+    const channels = [
+      pusher.subscribe(`clinic-${clinicId}`),
+      pusher.subscribe(`doctor-${session.user.doctorId}`),
+    ];
+
+    channels.forEach((channel) => {
+      channel.bind(
+        "queue:updated",
+        (data: { departmentId: string; tickets: QueueTicket[] }) => {
+          if (data.departmentId === departmentId) {
+            applyQueueTickets(data.tickets ?? []);
+          }
+        }
+      );
+    });
+
+    return () => {
+      channels.forEach((channel: ReturnType<PusherClient["subscribe"]>) => {
+        channel.unbind_all();
+        pusher.unsubscribe(channel.name);
+      });
+      pusher.disconnect();
+    };
+  }, [applyQueueTickets, clinicId, departmentId, session?.user.doctorId]);
 
   async function updateStatus(ticketId: string, status: string) {
-    await fetch(`/api/queue/${ticketId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status,
-        ...consultForm,
-      }),
-    });
-    setSelectedTicket(null);
-    loadQueue();
+    setPendingTicketId(ticketId);
+    setActionError("");
+
+    try {
+      const res = await fetch(`/api/queue/${ticketId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status,
+          ...consultForm,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Unable to update queue ticket");
+      }
+
+      if (status === "IN_CONSULT") {
+        applyQueueTickets(
+          tickets.map((ticket) =>
+            ticket.id === ticketId ? { ...ticket, status: "IN_CONSULT" } : ticket
+          )
+        );
+      }
+
+      setSelectedTicket(null);
+      await loadQueue();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Unable to update queue ticket");
+    } finally {
+      setPendingTicketId(null);
+    }
   }
 
   async function updateAvailability(status: string, delayMinutes?: number) {
@@ -100,6 +184,7 @@ export default function DoctorDashboard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: availability.id, status, delayMinutes }),
     });
+    loadAvailability();
     loadQueue();
   }
 
@@ -150,6 +235,11 @@ export default function DoctorDashboard() {
       )}
 
       <Card title="Live Queue">
+        {actionError && (
+          <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+            {actionError}
+          </p>
+        )}
         {tickets.length === 0 ? (
           <p className="text-gray-500">No patients in queue</p>
         ) : (
@@ -188,14 +278,26 @@ export default function DoctorDashboard() {
                 <div className="flex items-center gap-2">
                   <StatusBadge status={ticket.status} />
                   {ticket.status === "WAITING" && (
-                    <Button onClick={() => updateStatus(ticket.id, "IN_CONSULT")}>
-                      Call In
+                    <Button
+                      disabled={pendingTicketId === ticket.id}
+                      onClick={() => updateStatus(ticket.id, "IN_CONSULT")}
+                    >
+                      {pendingTicketId === ticket.id ? "Calling..." : "Call In"}
                     </Button>
                   )}
                   {ticket.status === "IN_CONSULT" && (
                     <>
-                      <Button onClick={() => setSelectedTicket(ticket)}>Complete</Button>
-                      <Button variant="danger" onClick={() => updateStatus(ticket.id, "NO_SHOW")}>
+                      <Button
+                        disabled={pendingTicketId === ticket.id}
+                        onClick={() => setSelectedTicket(ticket)}
+                      >
+                        Complete
+                      </Button>
+                      <Button
+                        variant="danger"
+                        disabled={pendingTicketId === ticket.id}
+                        onClick={() => updateStatus(ticket.id, "NO_SHOW")}
+                      >
                         No Show
                       </Button>
                     </>

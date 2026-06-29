@@ -32,6 +32,24 @@ export default function RegisterPage() {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
+  function formatError(data: { error?: unknown; formErrors?: unknown }) {
+    if (typeof data.error === "string") return data.error;
+
+    if (Array.isArray(data.formErrors) && data.formErrors.length > 0) {
+      return data.formErrors.join(" ");
+    }
+
+    if (data.error && typeof data.error === "object") {
+      const messages = Object.values(data.error)
+        .flatMap((value) => (Array.isArray(value) ? value : []))
+        .filter((value): value is string => typeof value === "string");
+
+      if (messages.length > 0) return messages.join(" ");
+    }
+
+    return "Registration failed";
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -47,16 +65,22 @@ export default function RegisterPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "Registration failed");
+        setError(formatError(data));
         setLoading(false);
         return;
       }
 
-      await signIn("credentials", {
+      const result = await signIn("credentials", {
         email: form.email,
         password: form.password,
         redirect: false,
       });
+
+      if (result?.error) {
+        setError("Account created, but sign in failed. Please sign in manually.");
+        setLoading(false);
+        return;
+      }
 
       const dashboard =
         form.role === "DOCTOR"
