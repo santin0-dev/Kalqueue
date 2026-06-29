@@ -116,6 +116,7 @@ model Doctor {
   specialty     String
   licenseNumber String
   phone         String
+  signatureImage String? @db.Text
 
   user                User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   clinicAssignments   DoctorClinicAssignment[]

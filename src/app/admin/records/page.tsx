@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { LoadingState } from "@/components/ui/loading-state";
 
 interface ConsultationRecord {
   id: string;
@@ -10,7 +11,13 @@ interface ConsultationRecord {
   followUpDate: string | null;
   createdAt: string;
   patient: { firstName: string; lastName: string };
-  doctor: { firstName: string; lastName: string; specialty: string };
+  doctor: {
+    firstName: string;
+    lastName: string;
+    specialty: string;
+    licenseNumber: string;
+    signatureImage: string | null;
+  };
   queueTicket: {
     clinic: { name: string };
     department: { name: string };
@@ -31,7 +38,15 @@ export default function AdminRecordsPage() {
       .catch(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="text-gray-500">Loading records...</div>;
+  if (loading) {
+    return (
+      <LoadingState
+        fullScreen
+        title="Loading consultation records"
+        message="Fetching completed checkups and doctor notes."
+      />
+    );
+  }
 
   return (
     <div>
@@ -65,6 +80,19 @@ export default function AdminRecordsPage() {
               <div className="mb-2">
                 <p className="text-xs font-medium text-gray-500 uppercase">Prescription</p>
                 <p className="text-sm text-gray-700">{record.prescription}</p>
+                {record.doctor.signatureImage && (
+                  <div className="mt-3 inline-block rounded border border-gray-100 bg-gray-50 p-3">
+                    <div
+                      aria-label="Doctor e-signature"
+                      role="img"
+                      className="h-16 w-48 bg-contain bg-center bg-no-repeat"
+                      style={{ backgroundImage: `url(${record.doctor.signatureImage})` }}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Dr. {record.doctor.firstName} {record.doctor.lastName} - License {record.doctor.licenseNumber}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
             {record.followUpDate && (

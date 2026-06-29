@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Input, Textarea, Select, Button } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { LoadingState } from "@/components/ui/loading-state";
 
 const COMPLAINT_OPTIONS = [
   { value: "general checkup", label: "General Checkup" },
@@ -61,6 +62,13 @@ export function IntakeForm({ patientId, onComplete }: IntakeFormProps) {
 
   return (
     <Card title="Patient Intake Form" subtitle="Tell us about your visit today">
+      {loading && (
+        <LoadingState
+          fullScreen
+          title="Submitting intake"
+          message="Saving your visit details..."
+        />
+      )}
       <form onSubmit={handleSubmit} className="space-y-4">
         <Select
           label="Reason for Visit"

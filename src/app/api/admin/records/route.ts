@@ -25,7 +25,15 @@ export async function GET(req: NextRequest) {
       where,
       include: {
         patient: { select: { firstName: true, lastName: true } },
-        doctor: { select: { firstName: true, lastName: true, specialty: true } },
+        doctor: {
+          select: {
+            firstName: true,
+            lastName: true,
+            specialty: true,
+            licenseNumber: true,
+            signatureImage: true,
+          },
+        },
         queueTicket: {
           select: {
             clinic: { select: { name: true } },

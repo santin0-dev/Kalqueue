@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Input, Button } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import Image from "next/image";
+import { LoadingState } from "@/components/ui/loading-state";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -41,6 +42,13 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      {loading && (
+        <LoadingState
+          fullScreen
+          title="Signing in"
+          message="Taking you to your dashboard..."
+        />
+      )}
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2 mb-6">

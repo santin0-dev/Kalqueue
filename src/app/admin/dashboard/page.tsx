@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { CategoryBadge, StatusBadge } from "@/components/ui/badge";
 import { Button, Input } from "@/components/ui/input";
 import { QueueTicker } from "@/components/queue-ticker";
+import { LoadingState } from "@/components/ui/loading-state";
 
 interface HmoTicket {
   id: string;
@@ -42,6 +43,9 @@ export default function AdminDashboard() {
     maxDailyWalkins: 50,
   });
   const [clinicId, setClinicId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [savingCapacity, setSavingCapacity] = useState(false);
+  const [securingLoaId, setSecuringLoaId] = useState<string | null>(null);
 
   useEffect(() => {
     const cid = session?.user.clinicId;
@@ -64,32 +68,59 @@ export default function AdminDashboard() {
           maxDailyWalkins: clinicData.config.maxDailyWalkins,
         });
       }
-    });
+    }).finally(() => setLoading(false));
   }, [session?.user.clinicId]);
 
   async function secureLoa(ticketId: string) {
-    await fetch("/api/doctors/availability", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "secureLoa", ticketId }),
-    });
-    const hmoRes = await fetch(
-      `/api/doctors/availability?hmoLane=true&clinicId=${clinicId}`
-    );
-    const hmoData = await hmoRes.json();
-    setHmoTickets(hmoData.tickets ?? []);
+    setSecuringLoaId(ticketId);
+    try {
+      await fetch("/api/doctors/availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "secureLoa", ticketId }),
+      });
+      const hmoRes = await fetch(
+        `/api/doctors/availability?hmoLane=true&clinicId=${clinicId}`
+      );
+      const hmoData = await hmoRes.json();
+      setHmoTickets(hmoData.tickets ?? []);
+    } finally {
+      setSecuringLoaId(null);
+    }
   }
 
   async function saveCapacity() {
-    await fetch("/api/clinics", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clinicId, ...capacity }),
-    });
+    setSavingCapacity(true);
+    try {
+      await fetch("/api/clinics", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clinicId, ...capacity }),
+      });
+    } finally {
+      setSavingCapacity(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <LoadingState
+        fullScreen
+        title="Loading admin dashboard"
+        message="Preparing clinic operations, reports, and capacity settings."
+      />
+    );
   }
 
   return (
     <div>
+      {(savingCapacity || securingLoaId) && (
+        <LoadingState
+          fullScreen
+          title={savingCapacity ? "Saving settings" : "Updating LOA"}
+          message={savingCapacity ? "Updating clinic capacity..." : "Securing the patient's LOA..."}
+        />
+      )}
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>
       <p className="text-gray-500 mb-8">Clinic-wide operations overview</p>
 
@@ -139,7 +170,12 @@ export default function AdminDashboard() {
                       <p className="text-xs text-purple-600">{t.patient.hmoProvider}</p>
                     )}
                   </div>
-                  <Button onClick={() => secureLoa(t.id)}>Mark LOA Secured</Button>
+                  <Button
+                    disabled={securingLoaId === t.id}
+                    onClick={() => secureLoa(t.id)}
+                  >
+                    {securingLoaId === t.id ? "Securing..." : "Mark LOA Secured"}
+                  </Button>
                 </div>
               ))}
             </div>
@@ -198,7 +234,13 @@ export default function AdminDashboard() {
               onChange={(e) => setCapacity({ ...capacity, maxDailyWalkins: parseInt(e.target.value) })}
             />
           </div>
-          <Button className="mt-4" onClick={saveCapacity}>Save Configuration</Button>
+          <Button
+            className="mt-4"
+            disabled={savingCapacity}
+            onClick={saveCapacity}
+          >
+            {savingCapacity ? "Saving..." : "Save Configuration"}
+          </Button>
         </Card>
       </div>
     </div>
