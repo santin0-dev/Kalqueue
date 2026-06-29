@@ -2,7 +2,7 @@
 
 KalQueue is a staged clinic queue and records system built for Philippine clinics. It connects patient intake, live queue tracking, doctor consultation, admin monitoring, reports, backups, and AI-assisted charting into one workflow.
 
-## The 80/20 Idea
+## The Airport Stage System
 
 Clinics are not bank queues. A clinic visit has stages:
 
