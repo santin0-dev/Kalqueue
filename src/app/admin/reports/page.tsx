@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/input";
+import { LoadingState } from "@/components/ui/loading-state";
 
 interface ReportSummary {
   totalTickets: number;
@@ -18,22 +20,52 @@ export default function AdminReportsPage() {
   const { data: session } = useSession();
   const [summary, setSummary] = useState<ReportSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const clinicId = session?.user.clinicId ?? "";
+
+  function download(path: string) {
+    const url = clinicId ? `${path}?clinicId=${encodeURIComponent(clinicId)}` : path;
+    window.location.href = url;
+  }
 
   useEffect(() => {
-    fetch(`/api/admin/reports?clinicId=${session?.user.clinicId ?? ""}`)
+    fetch(`/api/admin/reports?clinicId=${clinicId}`)
       .then((r) => r.json())
       .then((data) => {
         setSummary(data.summary ?? null);
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [session?.user.clinicId]);
+  }, [clinicId]);
 
-  if (loading) return <div className="text-gray-500">Loading reports...</div>;
+  if (loading) {
+    return (
+      <LoadingState
+        fullScreen
+        title="Generating reports"
+        message="Collecting today's queue and consultation data."
+      />
+    );
+  }
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Daily Reports</h1>
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Daily Reports</h1>
+          <p className="text-gray-500">Generate operational reports and backups.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => download("/api/admin/reports/download")}
+          >
+            Download Report CSV
+          </Button>
+          <Button onClick={() => download("/api/admin/backups")}>
+            Download Backup
+          </Button>
+        </div>
+      </div>
 
       {summary && (
         <>

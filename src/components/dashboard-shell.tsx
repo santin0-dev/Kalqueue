@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
+import { LoadingState } from "@/components/ui/loading-state";
 
 const patientLinks = [
   { href: "/patient/dashboard", label: "Dashboard" },
@@ -36,6 +38,11 @@ export function DashboardShell({
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
+  const [navLoading, setNavLoading] = useState(false);
+
+  useEffect(() => {
+    setNavLoading(false);
+  }, [pathname]);
 
   const links =
     role === "PATIENT"
@@ -49,6 +56,13 @@ export function DashboardShell({
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {navLoading && (
+        <LoadingState
+          fullScreen
+          title="Loading"
+          message="Opening the selected page..."
+        />
+      )}
       <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-gray-100 z-40">
         <div className="w-full px-6 lg:px-16 xl:px-24 h-full flex items-center justify-between">
           <div className="flex items-center gap-8">
@@ -61,6 +75,9 @@ export function DashboardShell({
                 <Link
                   key={link.href}
                   href={link.href}
+                  onClick={() => {
+                    if (pathname !== link.href) setNavLoading(true);
+                  }}
                   className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
                     pathname === link.href
                       ? "bg-teal-50 text-teal-700"
@@ -78,6 +95,7 @@ export function DashboardShell({
             </span>
             <button
               onClick={async () => {
+                setNavLoading(true);
                 await signOut({ redirect: false });
                 router.push("/");
                 router.refresh();

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { QueueTicker } from "@/components/queue-ticker";
 import { StatusBadge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
 
 interface TicketData {
   id: string;
@@ -45,7 +46,15 @@ export default function PatientQueuePage() {
       .catch(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="text-gray-500">Loading...</div>;
+  if (loading) {
+    return (
+      <LoadingState
+        fullScreen
+        title="Loading queue tracker"
+        message="Finding your active queue ticket."
+      />
+    );
+  }
 
   if (!ticket) {
     return (

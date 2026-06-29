@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { Card } from "@/components/ui/card";
 import { CategoryBadge, StatusBadge } from "@/components/ui/badge";
 import { Button, Textarea, Input } from "@/components/ui/input";
 import { QueueTicker } from "@/components/queue-ticker";
 import { Modal } from "@/components/ui/modal";
+import { LoadingState } from "@/components/ui/loading-state";
 import { createPusherClient } from "@/lib/pusher";
 import type PusherClient from "pusher-js";
 
@@ -41,6 +42,29 @@ interface QueueStats {
   pending: number;
 }
 
+const LOCAL_AI_URL =
+  process.env.NEXT_PUBLIC_LOCAL_AI_URL ?? "http://localhost:8765";
+const MAX_RECORDING_MS = 30_000;
+
+function formatAiFindings(data: {
+  findings?: string;
+  summary?: string;
+  keyPoints?: string[];
+}) {
+  if (data.summary || data.keyPoints?.length) {
+    return [
+      data.summary ? `Summary:\n${data.summary}` : "",
+      data.keyPoints?.length
+        ? `Key points:\n${data.keyPoints.map((point) => `- ${point}`).join("\n")}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  return data.findings ?? "";
+}
+
 export default function DoctorDashboard() {
   const { data: session } = useSession();
   const [tickets, setTickets] = useState<QueueTicket[]>([]);
@@ -52,6 +76,20 @@ export default function DoctorDashboard() {
   const [departmentId, setDepartmentId] = useState("");
   const [pendingTicketId, setPendingTicketId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
+  const [setupLoading, setSetupLoading] = useState(true);
+  const [aiStatus, setAiStatus] = useState("");
+  const [aiTranscript, setAiTranscript] = useState("");
+  const [aiImprovedNote, setAiImprovedNote] = useState("");
+  const [micLevel, setMicLevel] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isCharting, setIsCharting] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const aiWarmedRef = useRef(false);
 
   const applyQueueTickets = useCallback((nextTickets: QueueTicket[], nextStats?: QueueStats) => {
     setTickets(nextTickets);
@@ -84,19 +122,25 @@ export default function DoctorDashboard() {
   const loadSetup = useCallback(async () => {
     if (!session?.user.doctorId) return;
 
-    const doctorsRes = await fetch("/api/doctors");
-    const doctorsData = await doctorsRes.json();
-    const me = doctorsData.doctors?.find(
-      (d: { id: string }) => d.id === session.user.doctorId
-    );
+    try {
+      const doctorsRes = await fetch("/api/doctors");
+      const doctorsData = await doctorsRes.json();
+      const me = doctorsData.doctors?.find(
+        (d: { id: string }) => d.id === session.user.doctorId
+      );
 
-    if (!me?.clinicAssignments?.[0]) return;
+      if (!me?.clinicAssignments?.[0]) return;
 
-    const assignment = me.clinicAssignments[0];
-    setClinicId(assignment.clinicId);
-    setDepartmentId(assignment.departmentId);
-    loadQueue(assignment.departmentId);
-    loadAvailability();
+      const assignment = me.clinicAssignments[0];
+      setClinicId(assignment.clinicId);
+      setDepartmentId(assignment.departmentId);
+      await Promise.all([
+        loadQueue(assignment.departmentId),
+        loadAvailability(),
+      ]);
+    } finally {
+      setSetupLoading(false);
+    }
   }, [loadAvailability, loadQueue, session?.user.doctorId]);
 
   useEffect(() => {
@@ -141,6 +185,43 @@ export default function DoctorDashboard() {
     };
   }, [applyQueueTickets, clinicId, departmentId, session?.user.doctorId]);
 
+  useEffect(() => {
+    if (!selectedTicket || aiWarmedRef.current) return;
+
+    aiWarmedRef.current = true;
+    fetch(`${LOCAL_AI_URL}/warmup`, { method: "POST" }).catch(() => {
+      aiWarmedRef.current = false;
+    });
+  }, [selectedTicket]);
+
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        window.clearTimeout(recordingTimerRef.current);
+      }
+      mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+      stopMicMeter();
+    };
+  }, []);
+
+  function resetAiDraft() {
+    setAiStatus("");
+    setAiTranscript("");
+    setAiImprovedNote("");
+    setMicLevel(0);
+  }
+
+  function formatFindingsForSave() {
+    if (!aiTranscript && !aiImprovedNote) return consultForm.findings;
+
+    return [
+      aiTranscript ? `Original transcript:\n${aiTranscript}` : "",
+      `Improved charting:\n${consultForm.findings}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
   async function updateStatus(ticketId: string, status: string) {
     setPendingTicketId(ticketId);
     setActionError("");
@@ -152,6 +233,7 @@ export default function DoctorDashboard() {
         body: JSON.stringify({
           status,
           ...consultForm,
+          findings: status === "DONE" ? formatFindingsForSave() : consultForm.findings,
         }),
       });
       const data = await res.json().catch(() => null);
@@ -169,6 +251,10 @@ export default function DoctorDashboard() {
       }
 
       setSelectedTicket(null);
+      if (status === "DONE") {
+        setConsultForm({ findings: "", prescription: "", followUpDate: "" });
+        resetAiDraft();
+      }
       await loadQueue();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Unable to update queue ticket");
@@ -186,6 +272,157 @@ export default function DoctorDashboard() {
     });
     loadAvailability();
     loadQueue();
+  }
+
+  async function generateAiChart(audioBlob: Blob) {
+    setIsCharting(true);
+    setAiStatus("Generating chart note...");
+
+    try {
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "consultation.webm");
+      formData.append(
+        "context",
+        selectedTicket
+          ? JSON.stringify({
+              patient: `${selectedTicket.patient.firstName} ${selectedTicket.patient.lastName}`,
+              category: selectedTicket.patient.category,
+              chiefComplaint: selectedTicket.intakeForm?.chiefComplaint ?? "",
+            })
+          : ""
+      );
+
+      const res = await fetch(`${LOCAL_AI_URL}/chart`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || data?.error) {
+        throw new Error(data?.error ?? "Local AI charting failed");
+      }
+
+      const improvedFindings = formatAiFindings(data ?? {});
+
+      setAiTranscript(data.transcript ?? "");
+      setAiImprovedNote(improvedFindings);
+      setConsultForm((current) => ({
+        ...current,
+        findings: improvedFindings || current.findings,
+        prescription: data.prescription || current.prescription,
+        followUpDate: data.followUpDate || current.followUpDate,
+      }));
+      setAiStatus("Draft chart note ready.");
+    } catch (err) {
+      setAiStatus(
+        err instanceof Error
+          ? err.message
+          : "Local AI service is unavailable."
+      );
+    } finally {
+      setIsCharting(false);
+    }
+  }
+
+  function stopMicMeter() {
+    if (animationFrameRef.current) {
+      window.cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    audioContextRef.current?.close().catch(() => undefined);
+    audioContextRef.current = null;
+    analyserRef.current = null;
+    setMicLevel(0);
+  }
+
+  function startMicMeter(stream: MediaStream) {
+    stopMicMeter();
+
+    const audioContext = new AudioContext();
+    const analyser = audioContext.createAnalyser();
+    const source = audioContext.createMediaStreamSource(stream);
+    analyser.fftSize = 256;
+    source.connect(analyser);
+    audioContextRef.current = audioContext;
+    analyserRef.current = analyser;
+
+    const samples = new Uint8Array(analyser.frequencyBinCount);
+    const tick = () => {
+      analyser.getByteFrequencyData(samples);
+      const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
+      setMicLevel(Math.min(100, Math.round((average / 160) * 100)));
+      animationFrameRef.current = window.requestAnimationFrame(tick);
+    };
+    tick();
+  }
+
+  async function startAiRecording() {
+    if (isRecording || isCharting) return;
+
+    try {
+      setAiStatus("");
+      setAiTranscript("");
+      setAiImprovedNote("");
+      audioChunksRef.current = [];
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      startMicMeter(stream);
+
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "";
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        stopMicMeter();
+        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        if (blob.size > 0) {
+          generateAiChart(blob);
+        }
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      setAiStatus("Recording...");
+      recordingTimerRef.current = window.setTimeout(() => {
+        stopAiRecording();
+      }, MAX_RECORDING_MS);
+    } catch {
+      setAiStatus("Microphone permission is required.");
+    }
+  }
+
+  function stopAiRecording() {
+    if (recordingTimerRef.current) {
+      window.clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+    setIsRecording(false);
+  }
+
+  if (setupLoading) {
+    return (
+      <LoadingState
+        fullScreen
+        title="Loading doctor dashboard"
+        message="Preparing queue, availability, and live updates."
+      />
+    );
   }
 
   return (
@@ -289,7 +526,10 @@ export default function DoctorDashboard() {
                     <>
                       <Button
                         disabled={pendingTicketId === ticket.id}
-                        onClick={() => setSelectedTicket(ticket)}
+                        onClick={() => {
+                          resetAiDraft();
+                          setSelectedTicket(ticket);
+                        }}
                       >
                         Complete
                       </Button>
@@ -311,12 +551,49 @@ export default function DoctorDashboard() {
 
       <Modal
         isOpen={!!selectedTicket}
-        onClose={() => setSelectedTicket(null)}
+        onClose={() => {
+          if (isRecording) stopAiRecording();
+          setSelectedTicket(null);
+        }}
         title="Consultation Record"
       >
         <div className="space-y-4">
+          <div className="rounded-lg border border-teal-100 bg-teal-50 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant={isRecording ? "danger" : "secondary"}
+                disabled={isCharting}
+                onClick={isRecording ? stopAiRecording : startAiRecording}
+              >
+                {isRecording
+                  ? "Stop & Generate"
+                  : isCharting
+                    ? "Generating..."
+                    : "Record AI Note"}
+              </Button>
+              {aiStatus && (
+                <span className="text-sm text-teal-800">{aiStatus}</span>
+              )}
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+              <div
+                className="h-full rounded-full bg-teal-700 transition-all"
+                style={{ width: `${isRecording ? Math.max(micLevel, 4) : 0}%` }}
+              />
+            </div>
+            {aiTranscript && (
+              <Textarea
+                label="Original Transcript"
+                value={aiTranscript}
+                onChange={(e) => setAiTranscript(e.target.value)}
+                rows={3}
+                className="mt-3 bg-white text-xs"
+              />
+            )}
+          </div>
           <Textarea
-            label="Findings"
+            label={aiImprovedNote ? "Improved Charting" : "Findings"}
             value={consultForm.findings}
             onChange={(e) => setConsultForm({ ...consultForm, findings: e.target.value })}
           />

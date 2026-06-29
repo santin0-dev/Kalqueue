@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Select, Button } from "@/components/ui/input";
 import { IntakeForm } from "@/components/intake-form";
+import { LoadingState } from "@/components/ui/loading-state";
 
 interface Clinic {
   id: string;
@@ -38,6 +39,7 @@ export default function BookPage() {
   const [doctorId, setDoctorId] = useState("");
   const [visitType, setVisitType] = useState<"WALKIN" | "APPOINTMENT">("WALKIN");
   const [loading, setLoading] = useState(false);
+  const [setupLoading, setSetupLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -47,7 +49,7 @@ export default function BookPage() {
     ]).then(([clinicData, doctorData]) => {
       setClinics(clinicData.clinics ?? []);
       setDoctors(doctorData.doctors ?? []);
-    });
+    }).finally(() => setSetupLoading(false));
   }, []);
 
   const selectedClinic = clinics.find((c) => c.id === clinicId);
@@ -105,8 +107,25 @@ export default function BookPage() {
     );
   }
 
+  if (setupLoading) {
+    return (
+      <LoadingState
+        fullScreen
+        title="Loading booking options"
+        message="Fetching clinics, departments, and available doctors."
+      />
+    );
+  }
+
   return (
     <div className="max-w-2xl mx-auto">
+      {loading && (
+        <LoadingState
+          fullScreen
+          title="Joining queue"
+          message="Creating your queue ticket..."
+        />
+      )}
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Select Clinic & Doctor</h1>
       <Card>
         <div className="space-y-4">

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { CategoryBadge, StatusBadge } from "@/components/ui/badge";
 import { QueueTicker } from "@/components/queue-ticker";
+import { LoadingState } from "@/components/ui/loading-state";
 
 interface PatientData {
   firstName: string;
@@ -62,7 +63,13 @@ export default function PatientDashboard() {
   }, []);
 
   if (loading) {
-    return <div className="text-gray-500">Loading dashboard...</div>;
+    return (
+      <LoadingState
+        fullScreen
+        title="Loading patient dashboard"
+        message="Checking your queue, documents, and notifications."
+      />
+    );
   }
 
   const activeTicket = patient?.queueTickets[0];

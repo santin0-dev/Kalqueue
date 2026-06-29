@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { LoadingState } from "@/components/ui/loading-state";
 
 interface ConsultationRecord {
   id: string;
@@ -31,7 +32,15 @@ export default function AdminRecordsPage() {
       .catch(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="text-gray-500">Loading records...</div>;
+  if (loading) {
+    return (
+      <LoadingState
+        fullScreen
+        title="Loading consultation records"
+        message="Fetching completed checkups and doctor notes."
+      />
+    );
+  }
 
   return (
     <div>
