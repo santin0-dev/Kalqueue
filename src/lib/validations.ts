@@ -45,6 +45,15 @@ export const registerSchema = z
   )
   .refine(
     (data) => {
+      if (data.role === "PATIENT") {
+        return !!data.dateOfBirth && !Number.isNaN(new Date(data.dateOfBirth).getTime());
+      }
+      return true;
+    },
+    { message: "Patient registration requires a valid date of birth" }
+  )
+  .refine(
+    (data) => {
       if (data.role === "DOCTOR") {
         return !!data.specialty && !!data.licenseNumber && !!data.phone;
       }

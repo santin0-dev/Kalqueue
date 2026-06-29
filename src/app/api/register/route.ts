@@ -12,6 +12,30 @@ function getInviteCode(envValue: string | undefined, fallback: string) {
   return normalized || fallback;
 }
 
+function getRegisterError(err: unknown) {
+  if (err && typeof err === "object" && "code" in err) {
+    const code = (err as { code?: string }).code;
+
+    if (code === "P2002") {
+      return { message: "Email already registered", status: 409 };
+    }
+
+    if (code === "P2022") {
+      return {
+        message:
+          "Database schema is out of date. Run `npx prisma db push`, then redeploy.",
+        status: 500,
+      };
+    }
+  }
+
+  if (err instanceof Error && err.message.includes("Invalid Date")) {
+    return { message: "Please enter a valid date of birth", status: 400 };
+  }
+
+  return { message: "Registration failed. Please check the server logs.", status: 500 };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -104,6 +128,7 @@ export async function POST(req: NextRequest) {
     );
   } catch (err) {
     console.error("Register error:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    const { message, status } = getRegisterError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 }
